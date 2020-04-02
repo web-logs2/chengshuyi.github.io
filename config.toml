@@ -1,7 +1,7 @@
 ##########################################
 # 站点配置
 
-baseURL = "https://csy.github.io/"
+baseURL = "https://chengshuyi.github.io/"
 title = "Hugo 主题 MemE"
 languageCode = "zh-CN"
 hasCJKLanguage = true

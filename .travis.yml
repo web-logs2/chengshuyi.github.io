@@ -14,7 +14,7 @@ deploy:
     on:
         branch: master
     local_dir: public
-    repo: chengshuyi/csy.github.io
+    repo: chengshuyi/chengshuyi.github.io
     target_branch: master
     keep-history: true
 
