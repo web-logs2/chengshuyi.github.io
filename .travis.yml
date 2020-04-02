@@ -1,9 +1,12 @@
 sudo: false
 language: go
-git:
-    depth: 1
-install: go get -v github.com/gohugoio/hugo
-script: hugo
+install: 
+  - wget https://github.com/gohugoio/hugo/releases/download/v0.68.3/hugo_extended_0.68.3_Linux-64bit.tar.gz
+  - tar -xzvf hugo_extended_0.68.3_Linux-64bit.tar.gz
+  - chmod +x hugo
+  - export PATH=$PATH:$PWD
+  - hugo version
+script: hugo -t meme
 deploy:
     provider: pages
     skip_cleanup: true
