@@ -15,10 +15,8 @@ deploy:
         branch: master
     local_dir: public
     repo: chengshuyi/csy.github.io
-    fqdn: <custom-domain-if-needed>
     target_branch: master
-    email: c15271843451@outlook.com
-    name: chengshuyi
+    keep-history: true
 
 notifications:
   email: false
