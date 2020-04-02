@@ -7,7 +7,7 @@ script: hugo
 deploy:
     provider: pages
     skip_cleanup: true
-    github_token: 0757d8b1ec64a73a94bb24ec284a5d28fb40b9c8
+    github_token: $token
     on:
         branch: master
     local_dir: public
@@ -16,3 +16,6 @@ deploy:
     target_branch: master
     email: c15271843451@outlook.com
     name: chengshuyi
+
+notifications:
+  email: false
