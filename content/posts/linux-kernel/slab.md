@@ -2,7 +2,7 @@
 title: "Slab分配器"
 date: 2020-04-02T16:24:50+08:00
 description: ""
-draft: true
+draft: false
 tags: [linux内核、slab分配器]
 categories: [linux内核]
 ---
