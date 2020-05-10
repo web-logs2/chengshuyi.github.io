@@ -7,6 +7,46 @@ tags: []
 categories: []
 ---
 
+
+
+
+
+Kernel developers have used a variety of techniques to
+
+improve concurrency, including fifine-grained locks, lock
+
+free data structures, per-CPU data structures, and read
+
+copy-update (RCU)
+
+
+
+The success of RCU is, in part, due to its high perfor
+
+mance in the presence of concurrent readers and updaters.
+
+The RCU API facilitates this with two relatively simple
+
+primitives: readers access data structures within *RCU*
+
+*read-side critical sections*, while updaters use *RCU syn*
+
+*chronization* to wait for all pre-existing RCU read-side
+
+critical sections to complete.
+
+
+
+The primary RCU requirement is support for concur
+
+rent reading of a data structure, even during updates.
+
+The second RCU requirement is low space and execu
+
+tion overhead.
+
+
+
 ### Process scheduling
 
 Process
@@ -28,12 +68,6 @@ Challenge: more processes than processors
   you want to run three programs: window system, editor, compiler
   we need to multiplex N processors among M processes
   called time-sharing, scheduling, context switching
-
-Goals for solution:
-  Transparent to user processes
-  Pre-emptive for user processes
-  Pre-emptive for kernel, where convenient
-    Helps keeps system responsive
 
 xv6 solution:
   1 user thread and 1 kernel thread per process
@@ -70,26 +104,12 @@ Context-switching was one of the hardest things to get right in xv6
   interrupts
   process termination
 
-# Code
+### Code
 
 pre-emptive switch demonstration
   hog.c -- two CPU-bound processes
   my qemu has only one CPU
   let's look at how xv6 switches between them
-
-timer interrupt
-  run hog
-  list trap.c:124
-  breakpoint on yield()
-  [stack diagram]
-  print myproc()->name
-  print myproc()->pid
-  print/x tf->cs
-  print/x tf->eip
-  print tf->trapno (T_IRQ0+IRQ_TIMER = 32+0)
-  step into yield
-  state = RUNNABLE -- giving up CPU but want to run again
-  step into sched
 
 swtch -- to scheduler thread
   a context holds a non-executing kernel thread's saved registers
@@ -192,7 +212,3 @@ Thread clean up
   wait() does the final cleanup
     the parent is expected to call the wait() system call
     stack, pagetable, proc[] slot
-
-```
-
-```

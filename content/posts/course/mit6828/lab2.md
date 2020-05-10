@@ -1,5 +1,5 @@
 ---
-title: "Lab2"
+title: "Lab2 - 实验笔记"
 date: 2020-04-25T13:34:11+08:00
 description: ""
 draft: false
