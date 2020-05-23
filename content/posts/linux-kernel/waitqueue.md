@@ -49,7 +49,7 @@ void add_wait_queue(struct wait_queue_head *wq_head, struct wait_queue_entry *wq
 void add_wait_queue_exclusive(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry)
 // 从wait queue移除一个entry，一般是唤醒之后的操作
 void remove_wait_queue(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry)
-// 遍历wait queue，唤醒nr_exclusive个进程：回调函数default_wake_function，调用关系比较复杂，主要时将该进程挂载到run_queue以及将其状态置为TASK_RUNNING
+// 遍历wait queue，唤醒nr_exclusive个进程：回调函数default_wake_function，调用关系比较复杂，主要是将该进程挂载到run_queue以及将其状态置为TASK_RUNNING
 static int __wake_up_common(struct wait_queue_head *wq_head, unsigned int mode, int nr_exclusive, int wake_flags, void *key, wait_queue_entry_t *bookmark)
 ```
 
@@ -102,7 +102,9 @@ int __uio_register_device(struct module *owner,
 			  struct uio_info *info)
 	struct uio_device *idev;
 	idev = kzalloc(sizeof(*idev), GFP_KERNEL);
+	// 初始化一个wait queue head
 	init_waitqueue_head(&idev->wait);
+	// wait queue head和中断事件绑定
 	ret = request_irq(info->irq, uio_interrupt,
 				  info->irq_flags, info->name, idev);
 ```

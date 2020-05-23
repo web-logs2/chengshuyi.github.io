@@ -7,8 +7,17 @@ tags: []
 categories: []
 ---
 
+### 2020年5月14日
+1. 解决文件传输问题，读/写入文件出现FR_INVALID_OBJECT问题，原因是FIL file全局变量没有初始化；
+2. 文件名长度不能超过8个字符
 
+### 2020年5月18日
 
+解决input文件传输问题：
+
+1. 先移植tcp传输Input file，发现仍然传输不了，怀疑是config配置文件有问题；
+2. 测试是否配置文件发错时是否会影响input file的传输；（用戴书画原来的文件测试发现会）
+3. 定位到config发送时出现的问题；
 
 
 jtag不识别问题
@@ -96,8 +105,5 @@ https://blog.csdn.net/maddisonn/article/details/88062796
 1. debug应该使用右键项目debug as，不要使用快捷栏得按钮；
 2. sd path的编号是逻辑编号，一般0是sd卡，1是emmc，但是我只是用了emmc，所以emmc的path变成了0；
 3. f_mkfs是初始化整个emmc，重新写入fat表，所以调用一次后就可以注释掉了
-4. 
-
-
-
-修改Lwip v1.41置为nosysnotimer false
+4. 网络ping不通，修改为固定速率1000M
+5. xilffs undefined reference to f_open  https://blog.csdn.net/weixin_44167319/article/details/104074045
