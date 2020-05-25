@@ -2,20 +2,162 @@
 title: "Lab5 - 实验笔记"
 date: 2020-04-25T13:34:18+08:00
 description: ""
-draft: true
+draft: false
 tags: [mit6828 OS实验]
 categories: [mit6828 OS实验]
 ---
 
-> **Exercise 1.** `i386_init` identifies the file system environment by passing the type `ENV_TYPE_FS` to your environment creation function, `env_create`. Modify `env_create` in `env.c`, so that it gives the file system environment I/O privilege, but never gives that privilege to any other environment.
+### 文件系统架构
 
-解析：jos采用的文件系统ENV的类型包含两个，分别是`ENV_TYPE_USER`和`ENV_TYPE_FS`。
+在`init.c`通过`ENV_CREATE(fs_fs, ENV_TYPE_FS);`创建一个专用于文件系统的进程，该进程提供了文件系统的管理，包括读取文件、写入文件等等；
 
-The x86 processor uses the IOPL bits in the EFLAGS register to determine whether protected-mode code is allowed to perform special device I/O instructions such as the IN and OUT instructions. Since all of the IDE disk registers we need to access are located in the x86's I/O space rather than being memory-mapped, giving "I/O privilege" to the file system environment is the only thing we need to do in order to allow the file system to access these registers. In effect, the IOPL bits in the EFLAGS register provides the kernel with a simple "all-or-nothing" method of controlling whether user-mode code can access I/O space. In our case, we want the file system environment to be able to access I/O space, but we do not want any other environments to be able to access I/O space at all.
+假设有其他的进程需要进行文件读取，则需要通过ipc（inter process call）的方式将读取文件的元信息传递文件系统进程；
+
+以打开文件为例，具体代码流程如下：
 
 ```c
-void
-env_create(uint8_t *binary, enum EnvType type)
+// 库提供的open函数
+int open(const char *path, int mode)
+{
+	int r;
+	struct Fd *fd;
+	// fd_alloc利用之前的自映射快速找到用户进程空间未使用的struct Fd空间。（通过判断虚拟地址对应的表项是否存在）
+	if ((r = fd_alloc(&fd)) < 0)
+		return r;
+	// ipc参数
+	strcpy(fsipcbuf.open.req_path, path);
+	fsipcbuf.open.req_omode = mode;
+	// fsipc的信息传递，具体看下面
+	if ((r = fsipc(FSREQ_OPEN, fd)) < 0) {
+		fd_close(fd, 0);
+		return r;
+	}
+	return fd2num(fd);
+}
+```
+
+```c
+// file system对jos提供的ipc机制的封装，主要是传递的参数格式化
+// type是操作类型，比如FSREQ_OPEN
+// dstva是struct Fd的虚拟地址
+static int fsipc(unsigned type, void *dstva)
+{
+	static envid_t fsenv;
+	if (fsenv == 0)
+        // 利用子映射快速遍历所有的env，找到文件系统对应的env（ipc通信需要的参数）
+		fsenv = ipc_find_env(ENV_TYPE_FS);
+    // ipc
+	ipc_send(fsenv, type, &fsipcbuf, PTE_P | PTE_W | PTE_U);
+	return ipc_recv(NULL, dstva, NULL);
+}
+```
+
+
+
+```c
+      Regular env           FS env
+   +---------------+   +---------------+
+   |      read     |   |   file_read   |
+   |   (lib/fd.c)  |   |   (fs/fs.c)   |
+...|.......|.......|...|.......^.......|...............
+   |       v       |   |       |       | RPC mechanism
+   |  devfile_read |   |  serve_read   |
+   |  (lib/file.c) |   |  (fs/serv.c)  |
+   |       |       |   |       ^       |
+   |       v       |   |       |       |
+   |     fsipc     |   |     serve     |
+   |  (lib/file.c) |   |  (fs/serv.c)  |
+   |       |       |   |       ^       |
+   |       v       |   |       |       |
+   |   ipc_send    |   |   ipc_recv    |
+   |       |       |   |       ^       |
+   +-------|-------+   +-------|-------+
+           |                   |
+           +-------------------+
+```
+
+### spawn
+
+spawn是创建进程的另外一种方式，它不同于fork。fork的话是创建和自身一样的运行环境，程序代码也是当前运行的程序代码。而spawn则是从文件系统加载一段新的程序代码去运行。spwan的具体流程如下：
+
+1. 加载程序代码到内存中（从文件系统读取程序代码）；
+2. 创建子进程；
+
+
+
+### shell
+
+
+
+```c
+struct Pipe {
+	off_t p_rpos;		// read position
+	off_t p_wpos;		// write position
+	uint8_t p_buf[PIPEBUFSIZ];	// data buffer
+};
+
+struct Dev devpipe =
+{
+	.dev_id =	'p',
+	.dev_name =	"pipe",
+	.dev_read =	devpipe_read,
+	.dev_write =	devpipe_write,
+	.dev_close =	devpipe_close,
+	.dev_stat =	devpipe_stat,
+};
+
+// 分开的命令分别进行spawn出新的进程去处理
+		case '|':	
+			// 分配出两个fd,绑定的文件是devpipe
+			if ((r = pipe(p)) < 0) {
+				cprintf("pipe: %e", r);
+				exit();
+			}
+			// 创建子进程
+			if ((r = fork()) < 0) {
+				cprintf("fork: %e", r);
+				exit();
+			}
+			if (r == 0) {
+                // 子进程
+				if (p[0] != 0) {
+                    // 0是stdin，将pipe的第一个fd变成子进程的stdin
+					dup(p[0], 0);
+                    // 释放pipe的fd
+					close(p[0]);
+				}
+                // 释放pipe的fd
+				close(p[1]);
+				goto again;
+			} else {
+                // 当前进程
+				pipe_child = r;
+				if (p[1] != 1) {
+                    // 将pipe的第二个fd变成当前进程的stdout
+					dup(p[1], 1);
+					close(p[1]);
+				}
+				close(p[0]);
+				goto runit;
+			}
+```
+
+
+
+
+
+
+
+> **Exercise 1.** `i386_init` identifies the file system environment by passing the type `ENV_TYPE_FS` to your environment creation function, `env_create`. Modify `env_create` in `env.c`, so that it gives the file system environment I/O privilege, but never gives that privilege to any other environment.
+
+
+
+标记不同env的类型，文件系统的env类型是`ENV_TYPE_FS`。修改flags让用户模式的程序可以使用io特权指令。
+
+<!-- The x86 processor uses the IOPL bits in the EFLAGS register **to determine whether protected-mode code is allowed to perform special device I/O instructions such as the IN and OUT instructions.** Since all of the IDE disk registers we need to access are located in the x86's I/O space rather than being memory-mapped, **giving "I/O privilege" to the file system environment is the only thing we need to do in order to allow the file system to access these registers**. In effect, the IOPL bits in the EFLAGS register provides the kernel with a simple "all-or-nothing" method of controlling whether user-mode code can access I/O space. In our case, we want the file system environment to be able to access I/O space, but we do not want any other environments to be able to access I/O space at all. -->
+
+```c
+void env_create(uint8_t *binary, enum EnvType type)
 {
     // lab3
 	struct Env *env;
@@ -30,35 +172,24 @@ env_create(uint8_t *binary, enum EnvType type)
 }
 ```
 
-> **Question**
->
-> 1. Do you have to do anything else to ensure that this I/O privilege setting is saved and restored properly when you subsequently switch from one environment to another? Why?
-
-不需要，
-
-
-
-> *Challenge!* Implement interrupt-driven IDE disk access, with or without DMA. You can decide whether to move the device driver into the kernel, keep it in user space along with the file system, or even (if you really want to get into the micro-kernel spirit) move it into a separate environment of its own.
-
 
 >**Exercise 2.** Implement the `bc_pgfault` and `flush_block` functions in `fs/bc.c`. `bc_pgfault` is a page fault handler, just like the one your wrote in the previous lab for copy-on-write fork, except that its job is to load pages in from the disk in response to a page fault. When writing this, keep in mind that (1) `addr` may not be aligned to a block boundary and (2) `ide_read` operates in sectors, not blocks.
->
->The `flush_block` function should write a block out to disk *if necessary*. `flush_block` shouldn't do anything if the block isn't even in the block cache (that is, the page isn't mapped) or if it's not dirty. We will use the VM hardware to keep track of whether a disk block has been modified since it was last read from or written to disk. To see whether a block needs writing, we can just look to see if the `PTE_D` "dirty" bit is set in the `uvpt` entry. (The `PTE_D` bit is set by the processor in response to a write to that page; see 5.2.4.3 in [chapter 5](http://pdos.csail.mit.edu/6.828/2011/readings/i386/s05_02.htm) of the 386 reference manual.) After writing the block to disk, `flush_block` should clear the `PTE_D` bit using `sys_page_map`.Use make grade to test your code. Your code should pass "check_bc", "check_super", and "check_bitmap".
 
-采用微内核的形式，文件系统驱动实现在用户态，读/写文件通过微内核提供的系统调用来实现。
-
-
+硬盘的数据在内存中叫block cache，jos分配了固定的虚拟地址空间存放硬盘数据，当我们需要读写的时候，如果该数据在内存中不存在，则会触发异常，该异常由内核传递给用户程序处理，即`bc_pgfault`函数。
 
 ```c
 // static void bc_pgfault(struct UTrapframe *utf)
 	// 地址对齐
 	addr = ROUNDDOWN(addr,BLKSIZE);
+	// 分配一个page的物理内存
 	if((r = sys_page_alloc(0,(void *)addr,PTE_SYSCALL))<0)
 		panic("in bc_pgfault, sys_page_alloc: %e",r);
 	// 读取磁盘数据到内存中
 	if((r = ide_read(((uintptr_t)addr-DISKMAP)/BLKSIZE*BLKSECTS,addr,BLKSECTS))<0)
 		panic("in bc_pgfault, ide_read: %e",r);
 ```
+
+`flush_block`主要是维持内存和硬盘中的数据同步。
 
 ```c
 // void flush_block(void *addr)	
@@ -74,11 +205,7 @@ env_create(uint8_t *binary, enum EnvType type)
 	}
 ```
 
-> *Challenge!* The block cache has no eviction policy. Once a block gets faulted in to it, it never gets removed and will remain in memory forevermore. Add eviction to the buffer cache. Using the `PTE_A` "accessed" bits in the page tables, which the hardware sets on any access to a page, you can track approximate usage of disk blocks without the need to modify every place in the code that accesses the disk map region. Be careful with dirty blocks.
-
 > **Exercise 3.** Use `free_block` as a model to implement `alloc_block` in `fs/fs.c`, which should find a free disk block in the bitmap, mark it used, and return the number of that block. When you allocate a block, you should immediately flush the changed bitmap block to disk with `flush_block`, to help file system consistency.
->
-> Use make grade to test your code. Your code should now pass "alloc_block".
 
 从硬盘空闲块中分配一块，返回块号。
 
@@ -96,12 +223,8 @@ env_create(uint8_t *binary, enum EnvType type)
 ```
 
 > **Exercise 4.** Implement `file_block_walk` and `file_get_block`. `file_block_walk` maps from a block offset within a file to the pointer for that block in the `struct File` or the indirect block, very much like what `pgdir_walk` did for page tables. `file_get_block` goes one step further and maps to the actual disk block, allocating a new one if necessary.
->
-> Use make grade to test your code. Your code should pass "file_open", "file_get_block", and "file_flush/file_truncated/file rewrite", and "testfile".
 
-jos文件系统采用类似于inode的方式，每个文件数据对应的物理存储块编号采用直接方式和间接方式。直接索引就是将该存储块编号存放在inode的数组中，间接索引是将该存储块编号存放在block中，
-
-逻辑块号和物理块号。文件通过逻辑块号
+jos文件系统采用类似于inode的方式，每个文件数据对应的物理存储块编号采用直接方式和间接方式。直接索引就是将该存储块编号存放在inode的数组中，间接索引是将该存储块编号存放在block中。`file_block_walk`函数将文件的逻辑地址转换成对应的硬盘上的物理地址。
 
 ```c
 //static int file_block_walk(struct File *f, uint32_t filebno, uint32_t **ppdiskbno, bool alloc)
@@ -128,8 +251,9 @@ jos文件系统采用类似于inode的方式，每个文件数据对应的物理
 			}
 		}
 	}
-	// 获取物理存储块编号
+	// 获取间接索引的物理存储块（一般会触发上面的bc_pgfault）
 	addr = (uintptr_t *)(f->f_indirect*BLKSIZE+DISKMAP);
+	// 物理块号
 	*ppdiskbno = &addr[filebno-NDIRECT];
 	return 0;
 ```
@@ -139,6 +263,7 @@ jos文件系统采用类似于inode的方式，每个文件数据对应的物理
 	// LAB 5: Your code here.
 	int r;
 	uint32_t *ppdiskbno;
+	// 找到逻辑块号对应的物理块号
 	if((r = file_block_walk(f,filebno,&ppdiskbno,0))<0){
 		return r;
 	}
@@ -154,15 +279,11 @@ jos文件系统采用类似于inode的方式，每个文件数据对应的物理
 	return 0;
 ```
 
-> *Challenge!* The file system is likely to be corrupted if it gets interrupted in the middle of an operation (for example, by a crash or a reboot). Implement soft updates or journalling to make the file system crash-resilient and demonstrate some situation where the old file system would get corrupted, but yours doesn't.
-
 > **Exercise 5.** Implement `serve_read` in `fs/serv.c`.
 >
 > `serve_read`'s heavy lifting will be done by the already-implemented `file_read` in `fs/fs.c` (which, in turn, is just a bunch of calls to `file_get_block`). `serve_read` just has to provide the RPC interface for file reading. Look at the comments and code in `serve_set_size` to get a general idea of how the server functions should be structured.
->
-> Use make grade to test your code. Your code should pass "serve_open/file_stat/file_close" and "file_read" for a score of 70/150.
 
-
+前面几个函数是涉及到文件系统到硬盘的管理，下面的则是完成用户的请求。`serve_read`函数接收用户进程的Fsipc
 
 ```c
 //int serve_read(envid_t envid, union Fsipc *ipc)
@@ -180,8 +301,6 @@ jos文件系统采用类似于inode的方式，每个文件数据对应的物理
 ```
 
 > **Exercise 6.** Implement `serve_write` in `fs/serv.c` and `devfile_write` in `lib/file.c`.
->
-> Use make grade to test your code. Your code should pass "file_write", "file_read after file_write", "open", and "large file" for a score of 90/150.
 
 ```c
 // int serve_write(envid_t envid, struct Fsreq_write *req)
@@ -208,10 +327,6 @@ jos文件系统采用类似于inode的方式，每个文件数据对应的物理
 ```
 
 > **Exercise 7.** `spawn` relies on the new syscall `sys_env_set_trapframe` to initialize the state of the newly created environment. Implement `sys_env_set_trapframe` in `kern/syscall.c` (don't forget to dispatch the new system call in `syscall()`).
->
-> Test your code by running the `user/spawnhello` program from `kern/init.c`, which will attempt to spawn `/hello` from the file system.
->
-> Use make grade to test your code.
 
 ```c
 // static int sys_env_set_trapframe(envid_t envid, struct Trapframe *tf)	
@@ -230,5 +345,33 @@ jos文件系统采用类似于inode的方式，每个文件数据对应的物理
 >
 > Likewise, implement `copy_shared_pages` in `lib/spawn.c`. It should loop through all page table entries in the current process (just like `fork` did), copying any page mappings that have the `PTE_SHARE` bit set into the child process.
 
-spawn的话可以从用户态加载应用程序去运行
+spawn的话可以从用户态加载应用程序去运行。
+
+> **Exercise 9.** In your kern/trap.c, call kbd_intr to handle trap IRQ_OFFSET+IRQ_KBD and serial_intr to handle trap IRQ_OFFSET+IRQ_SERIAL. 
+
+`kbd_intr`函数读取键盘的输入；`serial_intr`函数读取输入的数据到buffer里面。
+
+```c
+		case IRQ_OFFSET+IRQ_KBD:{
+			kbd_intr();
+			lapic_eoi();
+			return;
+		}
+```
+
+> **Exercise 10.** The shell doesn't support I/O redirection. It would be nice to run sh <script instead of having to type in all the commands in the script by hand, as you did above. Add I/O redirection for < to user/sh.c.
+
+io重定向：以重定向输入为例（比如`sh<script`）。因为fd 0代表着stdin，fd 1代表着stdout，所以将待重定向的文件的fd拷贝到子进程的fd 0即可（执行`sh`的shell可以通过`getchar`的方式读取该文件内容【根据fd绑定的内容找到对应的`devfile`，那么`getchar`的读取转换成`devfile->read`】）。
+
+```c
+			if ((fd = open(t, O_RDONLY)) < 0) {
+				cprintf("open %s for read: %e", t, fd);
+				exit();
+			}
+			if(fd != 0){
+				dup(fd,0);
+				close(fd);
+			}
+			break;
+```
 
