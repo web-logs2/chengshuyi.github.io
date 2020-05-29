@@ -9,10 +9,6 @@ categories: [mit6828 OS实验]
 
 [lab1的实验代码](https://github.com/chengshuyi/jos-lab/commit/487630546efdc7ecc668ced4508cf6f164c56fd6)
 
-### Getting Started with x86 assembly
-
-NASM uses the so-called ***Intel* syntax** while GNU uses the ***AT&T* syntax.** [Brennan's Guide to Inline Assembly](http://www.delorie.com/djgpp/doc/brennan/brennan_att_inline_djgpp.html)
-
 ### The PC's Physical Address Space
 
 ```c
@@ -48,27 +44,28 @@ NASM uses the so-called ***Intel* syntax** while GNU uses the ***AT&T* syntax.**
 +------------------+  <- 0x00000000
 ```
 
-* 早期的16位的8088处理器能够访问1MB的地址空间，可以知道对应地址总线是20位，数据总线是16位，对应的寄存器也就是16位的，所以intel采用segment:offset来计算物理地址[^2]。
-
+* low Memory对应的是早期的处理器，只能够访问640KB内存空间；
+* 然而16位的8088处理器能够访问1MB的地址空间，可以知道对应地址总线是20位，但是由于数据总线是16位，对应的寄存器也就是16位的，所以intel采用segment:offset来计算物理地址[^2]；
 * VGA(video display buffers)：视频显示用的，每隔一定的时间，对应的硬件就会从该区域读取要显示的图像。
-* ROMs：存放固件。
-
-* BIOS ROM：一般是nor flash，nor flash支持XIP(eXecute In Place)，可以将其数据映射到RAM地址空间。
+* ROMs：存放固件，非易失存储器。
+* BIOS ROM：一般是nor flash，nor flash支持XIP(eXecute In Place)，所以可以在这里存放bios代码。
 * Extended Memory：高于1MB的剩余物理空间，最多到4GB。
 
 >  JOS只能使用前256MB的物理内存？
 
-### bootloader系统启动
+### bios和bootloader
 
-下面是biod->bootloader->kernel entry的大致流程：
+bios的主要工作内容是：系统初始化和自检、加载bootloader到内存中以及将控制权交给bootloader。下面是bios->bootloader->kernel entry的大致流程：
 
-1. ROM BIOS开机自检，其第一个指令是`[f000:fff0] 0xffff0:	ljmp   $0xf000,$0xe05b`；
+1. 处理器启动时进入real模式，并设置`cs=0xf000`和`ip=0xfff0`。物理地址是：`physical address = 16 * segment + offset`，所以第一条指令的地址是`0xffff0`，位于BIOS ROM空间；
 
-2. ROM BIOS将我们的启动代码加载到物理地址`0000:7c00`，最后`jmp`指令跳转到我们的代码处执行；
+2. ROM BIOS开机自检，其第一个指令是`[f000:fff0] 0xffff0:	ljmp   $0xf000,$0xe05b`；
 
-3. 处理器启动时进入real模式，并设置`cs=0xf000`和`ip=0xfff0`。物理地址是：`physical address = 16 * segment + offset`；
+3. ROM BIOS完成初始化后，会将我们的启动代码（bootloader）从硬盘第一个扇区（512字节）加载到物理地址`0000:7c00`，最后`jmp`指令跳转到我们的代码处执行，也就是物理地址`0000:7c00`；
 
-4. Enable A20[^2]：80286（24根地址线）为了兼容8088（20根地址线）；
+4. 
+
+5. Enable A20[^2]：80286（24根地址线）为了兼容8088（20根地址线）；
 
    >8086所能访问的物理地址空间：0(0x0000:0x0000)到0x10FFEF(FFFF:FFFF)，多出来了第20位，因为8086地址线只有20根，所以没有影响；
    >
@@ -76,9 +73,9 @@ NASM uses the so-called ***Intel* syntax** while GNU uses the ***AT&T* syntax.**
    >
    >乃们看出来了没？A20 是 80286 时代照顾8088软件的产物。通常所说的32位保护模式是 80386 才出现的，**所以，A20跟保护模式毛关系都没有！**开不开都一样进，影响的只是第20位而已
 
-5. 切换模式：从实模式切换到保护模式，保护模式使用gdt和ldt，可以访问到比实模式更多的物理地址空间；
+6. 切换模式：从实模式切换到保护模式，保护模式使用gdt和ldt（段寄存器和偏移从16位到32位），可以访问到比实模式更多的物理地址空间；
 
-6. 根据elf的信息将内核代码从硬盘加载到物理内存中；
+7. 根据elf的信息将内核代码从硬盘加载到物理内存中；
 
    IO端口地址[^1]：
 
@@ -93,6 +90,7 @@ NASM uses the so-called ***Intel* syntax** while GNU uses the ***AT&T* syntax.**
 - At what point does the processor start executing 32-bit code? What exactly causes the switch from 16- to 32-bit mode?
 
   ```c
+  # 前面使用lgdt指令将gdt加载到对应的寄存器
   orl     $CR0_PE_ON, %eax
   movl    %eax, %cr0
   ljmp    $PROT_MODE_CSEG, $protcseg
@@ -130,7 +128,7 @@ NASM uses the so-called ***Intel* syntax** while GNU uses the ***AT&T* syntax.**
 
 下面是内核汇编代码的大致运行流程：
 
-1. 此时分页系统还未开启，内核访问位置相关的代码（比如数据），需要使用RELOC，手动将虚拟地址转换成物理地址；
+1. 此时分页系统还未开启，内核访问位置相关的代码（比如数据），需要使用RELOC，手动将虚拟地址转换成物理地址（取数据时需要转换）；
 
 2. 将页目录表基地址加载到cr3寄存器，再修改cr0寄存器，开启分页系统；
 
@@ -143,7 +141,7 @@ NASM uses the so-called ***Intel* syntax** while GNU uses the ***AT&T* syntax.**
    	[KERNBASE>>PDXSHIFT]
    		= ((uintptr_t)entry_pgtable - KERNBASE) + PTE_P + PTE_W
    };
-   讲一下为什么要映射VA[0,4MB)，因为当前的ip处于[0,4MB)，所以开启分页系统之后ip仍然处于[0,4MB)，如果没有VA[0,4MB)的映射会出现page fault。                                                     
+   可以看到这里映射了两段虚拟地址，分别是[0, 4MB) 和 [KERNBASE, KERNBASE+4MB)。讲一下为什么要映射VA[0,4MB)？因为当前的ip处于[0,4MB)，所以开启分页系统之后ip仍然处于[0,4MB)，如果没有VA[0,4MB)的映射会出现page fault。
    ```
 
 3. 修改ip的值到内核空间；
