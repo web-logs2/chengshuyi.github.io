@@ -9,6 +9,12 @@ categories: [mit6828 OS实验]
 
 [lab1的实验代码](https://github.com/chengshuyi/jos-lab/commit/487630546efdc7ecc668ced4508cf6f164c56fd6)
 
+lab1的实验主要讲述了x86的物理地址空间的分布，特别需要注意的是BIOS ROM，pc启动后运行的第一条指令就在BIOS ROM中。接着便是BIOS如何从硬盘中加载bootloader，最后是bootloader如何从硬盘中加载内核。
+
+在bootloader代码中有几个比较难懂的点，一个是使能A20，另外一个是保护模式和实模式。使能A20是为了兼容传统的16位PC的解决方案。保护模式和实模式涉及到CS:IP的计算方式。
+
+本文不会涉及到具体代码，简单记录了比较关键的部分。特别是较清晰的梳理了BIOS、bootloader和内核之间的关系，以及其各自对应的启动流程。
+
 ### The PC's Physical Address Space
 
 ```c
@@ -52,6 +58,8 @@ categories: [mit6828 OS实验]
 * Extended Memory：高于1MB的剩余物理空间，最多到4GB。
 
 >  JOS只能使用前256MB的物理内存？
+>
+>  JOS内核的虚拟地址空间是[0xf0000000,0xffffffff]，大小是256MB。所以内核在没有高端内存的概念下，只能管理256MB物理内存。
 
 ### bios和bootloader
 
