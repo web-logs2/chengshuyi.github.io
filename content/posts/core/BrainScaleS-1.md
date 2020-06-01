@@ -87,11 +87,20 @@ review
 
 
 
-
-
-![image-20200529142658580](C:\Users\dell\AppData\Roaming\Typora\typora-user-images\image-20200529142658580.png)
+![](https://gitee.com/chengshuyi/scripts/raw/master/img/20200601093439.png)
 
 ### 3. 实现
+
+#### A. 配置
+
+配置的正确性非常重要，BSS-OS提供了几个库可以保证配置的正确性和控制流程
+
+* 坐标系统：提供坐标转换库
+* 地址，
+
+#### C. Commissioning
+
+
 
 #### D. 网络描述 
 
