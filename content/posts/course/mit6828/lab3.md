@@ -7,11 +7,9 @@ tags: [mit6828 OS实验]
 categories: [mit6828 OS实验]
 ---
 
+lab3的实验主要涉及到x86的硬件机制：中断、异常等等。因此，需要自己实现中断向量表、保存和恢复上下文、系统调用和页异常相关的函数。
 
-
-
-
-
+lab3也新增了用户进程的概念，需要实现相关函数。
 
 ### user environments
 
@@ -120,19 +118,107 @@ boot_map_region(kern_pgdir,UENVS,ROUNDUP(sizeof(struct Env)*NENV,PGSIZE),PADDR(e
 
 ![](https://gitee.com/chengshuyi/scripts/raw/master/img/20200425200239.png)
 
-### Page Faults, Breakpoints Exceptions, and System Calls
+### 页异常
 
-page falults比较简单，不再叙述；
+页异常的中断向量号是14，当页异常发生时，处理器会自动保存其虚拟地址到`cr2`寄存器；
 
-breakpoints exceptions：貌似linux上的gdb调试程序就是通过这个异常来实现的；
+> **Exercise 5.** Modify `trap_dispatch()` to dispatch page fault exceptions to `page_fault_handler()`. 
 
-系统调用：这里需要注意的是当前不再通过栈传递参数，而是通过寄存器传递，系统调用号存在eax寄存器，剩余的五个参数分别对应着 %edx, %ecx, %ebx, edi, 和esi。返回值存放在eax寄存器；
+```c
+		case T_PGFLT:{
+			page_fault_handler(tf);
+			break;
+		}
+```
 
-#### User-mode startup
+### 断点异常
 
-初始化该进程的环境变量，比如thisenv。
+断点异常的中断向量号是3，调试程序时需要在相应的指令下插入该条指令（int 0x3），触发软件异常，可以调试程序。
 
-#### Page faults and memory protection
+> **Exercise 6.** Modify `trap_dispatch()` to make breakpoint exceptions invoke the kernel monitor.
 
-用户进程传进来的指针一定要检查，首先检查该指针不能在内核地址空间，然后判断是否存在该虚拟地址，最后检查读写权限；
+```c
+		case T_BRKPT:{
+			monitor(tf);
+			break;
+		}
+```
+
+### 系统调用
+
+> **Exercise 7.** Add a handler in the kernel for interrupt vector `T_SYSCALL`. You will have to edit `kern/trapentry.S` and `kern/trap.c`'s `trap_init()`. You also need to change `trap_dispatch()` to handle the system call interrupt by calling `syscall()` (defined in `kern/syscall.c`) with the appropriate arguments, and then arranging for the return value to be passed back to the user process in `%eax`. Finally, you need to implement `syscall()` in `kern/syscall.c`. Make sure `syscall()` returns `-E_INVAL` if the system call number is invalid. You should read and understand `lib/syscall.c` (especially the inline assembly routine) in order to confirm your understanding of the system call interface. Handle all the system calls listed in `inc/syscall.h` by invoking the corresponding kernel function for each call.
+
+实现系统调用部分，为用户程序提供内核服务，具体看代码:-）。
+
+#### 用户程序入口
+
+主要关注几个文件的代码，分别是`lib/entry.S`、`lib/libmain.c`和`lib/exit.c`。
+
+> **Exercise 8.** Add the required code to the user library, then boot your kernel. You should see `user/hello` print "`hello, world`" and then print "`i am environment 00001000`". `user/hello` then attempts to "exit" by calling `sys_env_destroy()` (see `lib/libmain.c` and `lib/exit.c`).
+
+```c
+void
+libmain(int argc, char **argv)
+{
+	// set thisenv to point at our Env structure in envs[].
+	// LAB 3: Your code here.
+	envid_t id = sys_getenvid();
+	thisenv = &envs[ENVX(id)];
+
+	// save the name of the program so that panic() can use it
+	if (argc > 0)
+		binaryname = argv[0];
+
+	// call user main routine
+	umain(argc, argv);
+
+	// exit gracefully
+	exit();
+}
+```
+
+#### 内存保护机制
+
+1. 用户进程传进来的指针一定要检查，首先检查该指针不能在内核地址空间，然后判断是否存在该虚拟地址，最后检查读写权限；
+2. 内核不能够发生页错误；
+
+> **Exercise 9.** Change `kern/trap.c` to panic if a page fault happens in kernel mode.
+>
+> Read `user_mem_assert` in `kern/pmap.c` and implement `user_mem_check` in that same file.
+>
+> Change `kern/syscall.c` to sanity check arguments to system calls.
+
+内核不能够发生页错误。
+
+```c
+	if(tf->tf_cs == GD_KT){
+		panic("kernel page fault\n");
+	}
+```
+
+用户进程传进来的指针检查函数：
+
+```c
+int user_mem_check(struct Env *env, const void *va, size_t len, int perm)
+{
+	// LAB 3: Your code here.
+	uintptr_t s = ROUNDDOWN((uintptr_t)va,PGSIZE);
+	uintptr_t e = ROUNDUP((uintptr_t)va+len,PGSIZE);
+	pte_t *pte_entry;
+	for(;s<e;s+=PGSIZE){
+		// cprintf("va is %x ULIM is %x\n",s,ULIM);
+		page_lookup(env->env_pgdir,(void *)s,&pte_entry); 
+        // 1. 首先检查该指针不能在内核地址空间
+        // 2. 然后判断是否存在该虚拟地址
+        // 3. 最后检查读写权限
+		if(s>ULIM || pte_entry == NULL || (PGOFF(*pte_entry)&perm) != perm){
+			user_mem_check_addr = MAX(s,(uintptr_t)va);
+			return -E_FAULT;
+		}
+	}
+	return 0;
+}
+```
+
+
 
