@@ -17,7 +17,7 @@ categories: [linux内核]
 
 4. 伙伴系统对系统的数据和指令高速缓存有影响，slab分配器采用着色降低了这种副作用。
 
-伙伴系统分配的内存大小是页的倍数，不利于CPU的高速缓存：如果每次都将数据存放到从伙伴系统分配的页开始的位置会使得高速缓存的有的行被过度使用，而有的行几乎从不被使用**[cpu的L1 cache一般大小为32KB，采用伙伴系统分配$order\geq5$时就会出现上述的问题**]。slab分配器通过着色使得slab对象能够均匀的使用高速缓存，提高高速缓存的利用率。
+伙伴系统分配的内存大小是页的倍数，不利于CPU的高速缓存：如果每次都将数据存放到从伙伴系统分配的页开始的位置会使得高速缓存的有的行被过度使用，而有的行几乎从不被使用[**cpu的L1 cache一般大小为32KB，采用伙伴系统分配$order\geq5$时就会出现上述的问题**]。slab分配器通过着色使得slab对象能够均匀的使用高速缓存，提高高速缓存的利用率。
 
 ### 基本数据结构
 
@@ -25,7 +25,7 @@ categories: [linux内核]
 
 程序经常需要创建一些数据结构，比如进程描述符task_struct，内存描述符mm_struct等。slab分配器把这些需要分配的小块内存区作为对象，类似面向对象的思想。每一类对象分配一个cache，cache有一个或多个slab组成，slab由一个或多个物理页面组成。需要分配对象的时候从slab中空闲的对象取，用完了再放回slab中，而不是释放给物理页分配器，这样下次用的时候就不用重新初始化了，实现了对象的复用。
 
-![image-20200402195625069](../../../static/img/image-20200402195625069.png)
+![](https://gitee.com/chengshuyi/scripts/raw/master/img/image-20200402195625069.png)
 
 ### 鸡和蛋问题
 
@@ -34,35 +34,7 @@ categories: [linux内核]
 1. 我们知道slab分配器对象用来管理高速缓存：假设先有高速缓存的话，那么谁来管理高速缓存呢？
 2. 我们知道高速缓存用来存放slab分配器对象：假设先有slab分配器对象，那么它存放在哪里呢？
 
-linux的做法是：静态分配slab分配器对象内存空间，然后利用伙伴算法分配存储对象的页帧，
-
-
-
-static struct kmem_cache kmem_cache_boot
-
-\#define NUM_INIT_LISTS (2 * MAX_NUMNODES)
-
-static struct kmem_cache_node __initdata init_kmem_cache_node[NUM_INIT_LISTS];
-
-struct kmem_cache *
-
-kmalloc_caches[NR_KMALLOC_TYPES][KMALLOC_SHIFT_HIGH + 1]
-
-每种对象类型对应一个高速缓存，kmalloc使用的是通用高速缓存
-
-
-
-高速缓存划分为slab，slab有一个或多个物理上连续的页组成（一般是一个页），每个告诉缓存由多个slab
-
-
-
-每个slab包含数据结构，
-
-
-
-slab状态：满、部分满、空
-
-部分满》空》创建一个slab
+linux的做法是：静态分配slab分配器对象内存空间，然后利用伙伴算法分配存储对象的页帧。
 
 ### slab着色原理
 
@@ -85,3 +57,4 @@ slab状态：满、部分满、空
 2. 当slab的个数超过颜色数，效果甚微；
 3. slab的着色是用空间换时间，浪费一些空间来提高cache的命中率。
 
+<!--http://www.secretmango.com/jimb/Whitepapers/slabs/slab.html-->
