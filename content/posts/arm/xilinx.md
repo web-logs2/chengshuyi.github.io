@@ -7,7 +7,13 @@ tags: []
 categories: []
 ---
 
+### 2020年6月11日
+
+1. httpd post增加cgi功能；
+2. httpd增加返回功能；
+
 ### 2020年5月14日
+
 1. 解决文件传输问题，读/写入文件出现FR_INVALID_OBJECT问题，原因是FIL file全局变量没有初始化；
 2. 文件名长度不能超过8个字符
 

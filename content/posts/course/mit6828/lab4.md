@@ -33,14 +33,9 @@ JOS支持的是对称多处理器架构，最先启动的核称为bootstrap处�
 
 per-cpu表示的是为每个cpu维护自己的数据结构，其次访问cpu共享的数据结构时需要加锁。
 
-### Multiprocessor Support and Cooperative Multitasking
+### copy on write
 
-1. 将设备物理地址映射到内核虚拟地址空间（参考lab3的虚拟地址空间分布图）；
-2. 通过核间终端启动其它的CPU，并告诉该CPU第一条指令的首地址；
-3. 设置相关`per-cpu`变量，包括：Per-CPU kernel stack、Per-CPU TSS and TSS descriptor、Per-CPU current environment pointer和Per-CPU system registers（每个cpu独有的寄存器）；
-4. 实现大内核锁；
-5. 实现Round-Robin Scheduling；
-6. 利用系统调用实现在用户态创建一个新的进程，也就是`fork`的方式，jos有两种实现方式，一种是dump_fork实现的，即在fork时为新进程分配内存；另外一种是基于copy-on-write的方式，即将父进程和子进程的页表项置为COW，在修改该页表项对应的物理页时会触发page fault异常，有该异常处理函数分配具体内存；
+利用系统调用实现在用户态创建一个新的进程，也就是`fork`的方式，jos有两种实现方式，一种是dump_fork实现的，即在fork时为新进程分配内存；另外一种是基于copy-on-write的方式，即将父进程和子进程的页表项置为COW，在修改该页表项对应的物理页时会触发page fault异常，有该异常处理函数分配具体内存；
 
 > **Exercise 1.** Implement `mmio_map_region` in `kern/pmap.c`. To see how this is used, look at the beginning of `lapic_init` in `kern/lapic.c`.
 
@@ -119,7 +114,17 @@ void trap_init_percpu(void)
 }
 ```
 
+> **Exercise 5.** Apply the big kernel lock as described above, by calling `lock_kernel()` and `unlock_kernel()` at the proper locations.
 
+实现大内核锁。
+
+> **Exercise 6.** Implement round-robin scheduling in `sched_yield()` as described above.
+
+实现轮转法调度。
+
+> **Exercise 7.** Implement the system calls described above in `kern/syscall.c` and make sure `syscall()` calls them. You will need to use various functions in `kern/pmap.c` and `kern/env.c`, particularly `envid2env()`.
+
+实现`sys_exofork`、`sys_env_set_status`、`sys_page_alloc`、`sys_page_map`和`sys_page_unmap`函数。
 
 ### Copy-on-Write Fork
 
