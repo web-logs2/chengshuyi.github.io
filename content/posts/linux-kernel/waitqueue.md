@@ -1,13 +1,19 @@
 ---
-title: "Waitqueue"
+title: "Waitqueue简介"
 date: 2020-05-06T20:00:07+08:00
 description: ""
-draft: true
-tags: []
-categories: []
+draft: false
+tags: [linux内核]
+categories: [linux内核]
 ---
 
 wait queue思想比较简单，但是涉及到的多核和锁的问题比较多，这些问题也很复杂，因此本文并不会涉及这些内容。本文主要梳理wait queue的基本思想，以及一些驱动程序如何使用wait queue，包括常见的epoll驱动和uio驱动。
+
+文章[^1]提出了filtered wakeups方法，该方法需要进程被加入到wait queue时提供一个key，同时wakeup唤醒时也需要传入一个key，通过比较key是否相同来决定唤醒哪一个进程。该方案主要用于解决大量的进程在等待同一事件时，一起唤醒会导致惊群效应（在此之前采用hash的方法，将事件进行hash来决定将进程加入哪个wait queue中，但是[实验显示](https://lwn.net/Articles/83635/)hash方法很容易导致冲突，也会出现惊群效应）。
+
+文章[^2]提出在rt-kernel中使用simple wait queues，也就是当前的waitqueues机制中删除exclusive wakeup特性和回调函数特性，采用遍历的方法，一一唤醒每一个等待的进程。
+
+文章[^3]在文章[^2]的基础上谈到了waitqueue中的custom  wakeup callbacks是否会被加入到rt-kernel中。其指出custom wakeup callbacks在IO复用中会有很大的好处，特别是poll、epoll和select。但是custom wakeup callbacks会带来的问题就是回调函数的执行时间无法确定，无法满足实时性的要求。而且custom wakeup callbacks需要使用spinlock，spinlock在rt-kernel内可休眠的。所以，在rt-kernel内引入custom wakeup callbacks是比较困难的。
 
 ### 简介
 
@@ -19,8 +25,8 @@ wait queue采用双向链表的方式管理等待的进程，当事件发生的�
 // 队列元素
 struct wait_queue_entry {
 	unsigned int		flags;
-	void			*private;
-	wait_queue_func_t	func;	//回调函数，用于唤醒进程
+	void			*private;	//等待进程
+	wait_queue_func_t	func;	//回调函数，用于唤醒进程，一般采用默认的default_wake_function
 	struct list_head	entry;
 };
 
@@ -61,8 +67,8 @@ wait queue早期的策略比较简单。当事件发生时，调用`wake_up`函�
 Waiting / Blocking in Linux Driver Part – 3 https://sysplay.in/blog/linux-kernel-internals/2015/12/waiting-blocking-in-linux-driver-part-3/
 
 
-
-### epoll wait queue的使用
+<!-- 
+### epoll wait queue的使用 -->
 
 
 
@@ -294,4 +300,10 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Pradeep");
 MODULE_DESCRIPTION("Waiting Process Demo");
 ```
+
+### 参考文献
+
+[^1]: Filtered wakeups. https://lwn.net/Articles/83633/.
+[^2]: Simple wait queues. https://lwn.net/Articles/577370/.
+[^3]: The return of simple wait queues. https://lwn.net/Articles/661424/
 
