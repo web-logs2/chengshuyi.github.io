@@ -3,9 +3,20 @@ title: "Poll_select_epoll"
 date: 2020-05-05T13:06:02+08:00
 description: ""
 draft: true
-tags: []
-categories: []
+tags: [linux内核]
+categories: [linux内核]
 ---
+
+文章[^3]主要提到epoll需要新增几个syscall，来满足某些应用的需求（如qemu）。
+
+* `epoll_ctl_batch`：支持更新批量的fd，之前的`epoll_ctl`一次只能更新一个fd；
+* `epoll_pwait1`：解决`epoll_pwait`的时间精度不高（毫秒级别）；
+* 添加`EPOLLEXCLUSIVE`标识，解决惊群效应，对应的wait queue采用`add_wait_queue_exclusive`；
+* 但是，这样会导致wait queue一直唤醒等在队首的进程，因此增加了`add_wait_queue_rr`功能（**没怎么理解，既然在等待队列上，说明该进程是空闲的，空闲的去执行任务不很正常吗？**）；
+
+文章[^4]主要提到两个问题，一个是：惊群效应；另外一个是锁。惊群效应 
+
+文章[^5]主要提到在用户空间和内核空间维护一个环形缓冲（mmap的方式）。因为目前监听的fd的事件主要通过`epoll_ctl`的方式来进行修改，每次修改的话都需要进行一次系统用，比较耗时。因此，提出了采用环形缓冲的方式来通知事件。相当于，不采用系统调用的方式同内核通信，而是采用共享内存的方式，来提高程序的效率。这种ring-buffer的方式比较常见，比如io-uring等等。所以，作者提到内核是否能够提供一个统一的ring-buffer的交互形式，可以让编程人员更方便的使用。注：貌似该patch最后并没有整合到内核版本。
 
 
 ```c
@@ -218,9 +229,16 @@ struct pollfd {
         The timeout argument specifies the number of milliseconds that poll()
        should block waiting for a file descriptor to become ready.  The call
        will block until either:
-
+    
        · a file descriptor becomes ready;
-
+    
        · the call is interrupted by a signal handler; or
-
+    
        · the timeout expires.
+
+### 参考文献
+
+[^3]: Epoll evolving. https://lwn.net/Articles/633422/.
+[^4]: Issues with epoll(). https://lwn.net/Articles/637435/.
+[^5]: A ring buffer for epoll. https://lwn.net/Articles/789603/.
+

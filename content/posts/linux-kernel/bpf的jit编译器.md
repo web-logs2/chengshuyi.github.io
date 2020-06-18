@@ -9,7 +9,7 @@ categories: [linux内核]
 
 2001年，Eric Dumazet往bpf添加了jit（just in time）compiler功能，加速了bpf filter程序运行时间（包含编译+运行）。在[上一篇博文](https://chengshuyi.github.io/posts/linux-kernel/bpf-paper/)，我们知道bpf的原始filter程序是通过翻译一条指令也代表着执行一条指令（没有转换成对应机器的机器码的过程），没有编译的过程。jit编译器可以将bpf的filter程序（伪代码）编译成可以直接在主机运行的机器码。该[patch](https://lwn.net/Articles/437884/)实现了bfp程序到x86_64机器码的转换。
 
-本文介绍了jit编译器的原理
+本文介绍了jit编译器的原理。
 
 ### jit编译器
 
@@ -564,15 +564,10 @@ out:
 
 ```
 
-
-
-
-
 ### 参考文章
 
 [1]. Mccanne S , Jacobson V . The BSD Packet Filter: A New Architecture for User-level Packet Capture[C]// Proceedings of the USENIX Winter 1993 Conference Proceedings on USENIX Winter 1993 Conference Proceedings. USENIX Association, 1993.
 [2]. A JIT for packet filters. https://lwn.net/Articles/437981/.
 [3]. net: filter: Just In Time compiler. https://lwn.net/Articles/437884/.
-
 [4]. Understanding JIT compiler (just-in-time compiler) for java. https://aboullaite.me/understanding-jit-compiler-just-in-time-compiler/.
 
