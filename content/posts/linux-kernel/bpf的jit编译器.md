@@ -3,13 +3,13 @@ title: "bpf的jit编译器"
 date: 2020-05-10T16:33:22+08:00
 description: ""
 draft: false
-tags: [linux内核,bpf]
+tags: [linux内核,linux工具]
 categories: [linux内核]
 ---
 
 2001年，Eric Dumazet往bpf添加了jit（just in time）compiler功能，加速了bpf filter程序运行时间（包含编译+运行）。在[上一篇博文](https://chengshuyi.github.io/posts/linux-kernel/bpf-paper/)，我们知道bpf的原始filter程序是通过翻译一条指令也代表着执行一条指令（没有转换成对应机器的机器码的过程），没有编译的过程。jit编译器可以将bpf的filter程序（伪代码）编译成可以直接在主机运行的机器码。该[patch](https://lwn.net/Articles/437884/)实现了bfp程序到x86_64机器码的转换。
 
-本文介绍了jit编译器的原理。
+本文简单介绍了jit编译器的原理，并有实例分析。
 
 ### jit编译器
 
@@ -103,24 +103,13 @@ leaveq
 ret
 ```
 
-源码有删除一部分
+下面是jit编译的源码，有删除一部分。同时，给了一部分的注释：
 
 ```c
-
-/* bpf_jit_comp.c : BPF JIT compiler
- *
- * Copyright (C) 2011 Eric Dumazet (eric.dumazet@gmail.com)
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; version 2
- * of the License.
- */
 #include <linux/moduleloader.h>
 #include <asm/cacheflush.h>
 #include <linux/netdevice.h>
 #include <linux/filter.h>
-
 /*
  * Conventions :
  *  EAX : BPF A accumulator

@@ -134,10 +134,15 @@ uglyURLs = false
     mediaType = "application/rss+xml"
     baseName = "rss"
 
+# Search index for lunr.js
+[outputFormats.SearchIndex]
+    mediaType = "application/json"
+    baseName = "search"
+
 # Hugo 的输出控制
 [outputs]
     page = ["HTML"]
-    home = ["HTML", "SectionsAtom", "SectionsRSS"]
+    home = ["HTML", "SectionsAtom", "SectionsRSS", "SearchIndex"]
     section = ["HTML"]
     # 类别
     taxonomyTerm = ["HTML"]
@@ -211,7 +216,10 @@ uglyURLs = false
     [[menu.main]]
         weight = 7
         identifier = "lang-switcher"
-
+    [[menu.main]]
+        weight = 8
+        identifier = "search"
+        post = "search"
 
 
 ##########################################
@@ -329,11 +337,11 @@ uglyURLs = false
     #      Open Graph、Atom、RSS
 
     # 站点的创建时间
-    siteCreatedTime = "1969-07-20T20:17:43+00:00"
+    siteCreatedTime = "2019-07-20T20:17:43+00:00"
     # 注意：请保持此格式，更改数字
 
     # 站点的推特帐号
-    siteTwitter = "reuixiy"
+    # siteTwitter = "reuixiy"
     # 说明：用于 Twitter Cards
 
 
@@ -1262,6 +1270,13 @@ uglyURLs = false
     enableInstantPage = true
     # 说明：https://github.com/instantpage/instant.page
 
+    ######################################
+    # Lunr 搜索（暂不支持中文）
+
+    # 说明：需要开启 `SearchIndex` 的输出
+
+    enableLunrSearch = true
+    # 说明：https://lunrjs.com/
 
     ######################################
     # 404 页面
