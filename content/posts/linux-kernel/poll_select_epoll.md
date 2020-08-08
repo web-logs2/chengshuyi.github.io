@@ -19,6 +19,38 @@ categories: [linux内核]
 文章[^5]主要提到在用户空间和内核空间维护一个环形缓冲（mmap的方式）。因为目前监听的fd的事件主要通过`epoll_ctl`的方式来进行修改，每次修改的话都需要进行一次系统用，比较耗时。因此，提出了采用环形缓冲的方式来通知事件。相当于，不采用系统调用的方式同内核通信，而是采用共享内存的方式，来提高程序的效率。这种ring-buffer的方式比较常见，比如io-uring等等。所以，作者提到内核是否能够提供一个统一的ring-buffer的交互形式，可以让编程人员更方便的使用。注：貌似该patch最后并没有整合到内核版本。
 
 
+
+下面主要就两点进行二者的源码对比：
+
+### 系统调用参数传递
+
+poll核心的系统调用只有一个，其中参数`struct pollfd *fds`是一个链表，包含了要监听的所有文件，可以看到当监听的文件数量过多时，会发生大量的数据从用户空间拷贝到内核空间。
+
+`int poll(struct pollfd *fds, nfds_t nfds, int timeout);`
+
+select同poll一样将整个fd的传给内核，只是select采用位的方式。
+
+```
+int select(int nfds, fd_set *readfds, fd_set *writefds,
+                  fd_set *exceptfds, struct timeval *timeout);
+
+void FD_CLR(int fd, fd_set *set);		//将fd加入set集合
+int  FD_ISSET(int fd, fd_set *set);		//将fd从set集合中清除
+void FD_SET(int fd, fd_set *set);		//检测fd是否在set集合中，不在则返回0
+void FD_ZERO(fd_set *set);				//将set清零使集合中不含任何fd
+```
+
+epoll主要提供了三个系统调用，其中`epoll_ctl`用来控制监听的fd列表，以及修改相关参数。
+
+```c
+int epoll_create(int size);
+int epoll_ctl(int efd, int op, int fd, struct epoll_event *event);
+int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
+```
+
+### 触发方式
+
+
 ```c
 
 struct pollfd {
@@ -73,34 +105,35 @@ poll系统调用：
     将毫秒转换成内核struct timespec64时间结构体行态
     call do_sys_poll
         将用户传进来的struct pollfd数组拷贝到内核空间，用struct poll_list管理，每个poll_list占用4K的内存
-        1. 初始化struct poll_wqueues，主要是记录当前的polling_task和poll_table的_qproc
-        call do_poll
-            遍历struct poll_list
-                call do_pollfd
-                    call vfs_poll
-                        call file->f_op->poll(file, pt)
-                            调用file_operations的poll函数
-                            call socket->os->poll
-                            tcp_poll
-                                call sock_poll_wait
-                                    call poll_wait
-                                        如果poll_table->_qproc为NULL直接返回，因为已经挂载过一次
-                                        call poll_table->_qproc，该值在编号1处赋值
-                                        __pollwait:将wait queue挂载到目标wait queue
-                                            通过poll_table获取struct poll_wqueues
-                                            从struct poll_wqueues获取struct poll_table_entry
-                                            初始化struct poll_table_entry，特别需要注意其挂载在sock的waitqueue上和其wait queue entry的回调函数是pollwake
-                                            初始化wait queue entry
-                                            call add_wait_queue
-                                                将当前任务挂载到sock wait queue
-                                将当前socket的状态返回
-                            返回socket的状态
-                        返回socket的状态
-                    返回值不为0，说明有事件发生；返回值为0，说明没有事件发生
-                    将poll_table->_qproc置为NULL，这样下次不会重复将其挂载到wait queue和重复的poll table entry
-                    call poll_schedule_timeout
-            call poll_schedule_timeout
-                发起调度，timeout唤醒
+
+初始化struct poll_wqueues，主要是记录当前的polling_task和poll_table的_qproc
+ do_poll
+遍历struct poll_list
+    call do_pollfd
+        call vfs_poll
+            call file->f_op->poll(file, pt)
+                调用file_operations的poll函数
+                call socket->os->poll
+                tcp_poll
+                    call sock_poll_wait
+                        call poll_wait
+                            如果poll_table->_qproc为NULL直接返回，因为已经挂载过一次
+                            call poll_table->_qproc，该值在编号1处赋值
+                            __pollwait:将wait queue挂载到目标wait queue
+                                通过poll_table获取struct poll_wqueues
+                                从struct poll_wqueues获取struct poll_table_entry
+                                初始化struct poll_table_entry，特别需要注意其挂载在sock的waitqueue上和其wait queue entry的回调函数是pollwake
+                                初始化wait queue entry
+                                call add_wait_queue
+                                    将当前任务挂载到sock wait queue
+                    将当前socket的状态返回
+                返回socket的状态
+            返回socket的状态
+        返回值不为0，说明有事件发生；返回值为0，说明没有事件发生
+        将poll_table->_qproc置为NULL，这样下次不会重复将其挂载到wait queue和重复的poll table entry
+        call poll_schedule_timeout
+call poll_schedule_timeout
+    发起调度，timeout唤醒
 
 当事件发生时，比如sock会修改其对应的状态，然后调用类似`wake_up`函数：
 
@@ -235,6 +268,98 @@ struct pollfd {
        · the call is interrupted by a signal handler; or
     
        · the timeout expires.
+
+### 唤醒
+
+从下面代码可以看到，select和poll均采用default_wake_function。`init_waitqueue_func_entry(&entry->wait, pollwake);`
+
+```c
+static int __pollwake(wait_queue_entry_t *wait, unsigned mode, int sync, void *key)
+{
+	struct poll_wqueues *pwq = wait->private;
+	DECLARE_WAITQUEUE(dummy_wait, pwq->polling_task);
+
+	/*
+	 * Although this function is called under waitqueue lock, LOCK
+	 * doesn't imply write barrier and the users expect write
+	 * barrier semantics on wakeup functions.  The following
+	 * smp_wmb() is equivalent to smp_wmb() in try_to_wake_up()
+	 * and is paired with smp_store_mb() in poll_schedule_timeout.
+	 */
+	smp_wmb();
+	pwq->triggered = 1;
+
+	/*
+	 * Perform the default wake up operation using a dummy
+	 * waitqueue.
+	 *
+	 * TODO: This is hacky but there currently is no interface to
+	 * pass in @sync.  @sync is scheduled to be removed and once
+	 * that happens, wake_up_process() can be used directly.
+	 */
+	return default_wake_function(&dummy_wait, mode, sync, key);
+}
+
+static int pollwake(wait_queue_entry_t *wait, unsigned mode, int sync, void *key)
+{
+	struct poll_table_entry *entry;
+
+	entry = container_of(wait, struct poll_table_entry, wait);
+	if (key && !(key_to_poll(key) & entry->key))
+		return 0;
+	return __pollwake(wait, mode, sync, key);
+}
+/* Add a new entry */
+static void __pollwait(struct file *filp, wait_queue_head_t *wait_address,
+				poll_table *p)
+{
+	struct poll_wqueues *pwq = container_of(p, struct poll_wqueues, pt);
+	struct poll_table_entry *entry = poll_get_entry(pwq);
+	if (!entry)
+		return;
+	entry->filp = get_file(filp);
+	// sock的waitqueue head
+	entry->wait_address = wait_address;
+	entry->key = p->_key;
+	init_waitqueue_func_entry(&entry->wait, pollwake);
+	entry->wait.private = pwq;
+	add_wait_queue(wait_address, &entry->wait);
+}
+```
+
+`init_poll_funcptr(&epq.pt, ep_ptable_queue_proc);`
+
+`init_waitqueue_func_entry(&pwq->wait, ep_poll_callback);`
+
+```c
+init_poll_funcptr(&epq.pt, ep_ptable_queue_proc);
+
+static void ep_ptable_queue_proc(struct file *file, wait_queue_head_t *whead,
+				 poll_table *pt)
+{
+	struct epitem *epi = ep_item_from_epqueue(pt);
+	struct eppoll_entry *pwq;
+
+	if (epi->nwait >= 0 && (pwq = kmem_cache_alloc(pwq_cache, GFP_KERNEL))) {
+		init_waitqueue_func_entry(&pwq->wait, ep_poll_callback);
+		pwq->whead = whead;
+		pwq->base = epi;
+		if (epi->event.events & EPOLLEXCLUSIVE)
+			add_wait_queue_exclusive(whead, &pwq->wait);
+		else
+			add_wait_queue(whead, &pwq->wait);
+		list_add_tail(&pwq->llink, &epi->pwqlist);
+		epi->nwait++;
+	} else {
+		/* We have to signal that an error occurred */
+		epi->nwait = -1;
+	}
+}
+
+
+```
+
+
 
 ### 参考文献
 

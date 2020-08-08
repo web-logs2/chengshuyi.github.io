@@ -7,15 +7,87 @@ tags: []
 categories: []
 ---
 
+
+
+
+
+1. 页面刷新多次（大概几十次）就打不开网页了；
+2. 有时会出现unable to alloc pbuf in recv_handler错误问题；
+3. 文件传输涉及到跨域的问题；
+
+
+
+
+
+1. mem_malloc返回NULL指针，打开文件错误
+
+2. 出现很多的open error问题
+
+
+
+ERROR: unable to open file, Res = 9, name = /index.htm
+ERROR: unable to open file, Res = 9, name = /404.html
+ERROR: unable to open file, Res = 9, name = /404.htm
+ERROR: unable to open file, Res = 9, name = /404.shtml
+ERROR: unable to open file, Res = 9, name = /index.htm
+ERROR: unable to open file, Res = 9, name = /404.html
+ERROR: unable to open file, Res = 9, name = /404.htm
+ERROR: unable to open file, Res = 9, name = /404.shtml
+ERROR: unable to open file, Res = 9, name = /index.htm
+
+
+
+### 2020年6月20日
+
+1. oske新建一个10ms执行一次的任务，去检测状态；
+
+
+
+axi的状态：
+
+* IDLE：可以从axi发送数据或者接收数据
+* BUSY ：不可以从axi发送数据或者接收数据
+
+axi总线可以发送配置文件、测试文件、输入文件、清除文件、使能文件，但是每次只能完整的执行其中一个
+
+配置文件的配置状态：
+
+* IDLE：该文件还没有被配置；
+* ING：正在配置，但是还没有完成；
+* TIMEOUT：配置超时
+* DONE：配置完成
+
+备注：天杰的配置文件的结构体需要新增：配置文件指令个数、配置文件已发送指令个数、配置文件上个指令后等待返回的时间
+
+输入文件的配置状态：
+
+* IDEL：该文件还没有输入；
+* ING：正在输入，但是还没有完成；
+* TIMEOUT：输入超时；
+* DONE：输入完成
+
+测试文件可以看作是一个配置文件
+
+### 2020年6月18日
+
+问题：
+
+1. 需要netmask gw mac_addr
+2. master需要新增每一个板子的pcb
+3. malloc slaves fail
+4. f_mkfs(Path, FM_SFD, 0, work, sizeof work);
+5. FF_MAX_SS
+6. 测试400个是正常的，lwip大概在超时2小时候是75秒进行
+
 ### 2020年6月17日
 
 1. 移植httpd client，目前仍存在一些问题，做了些测试：
-  a. 采用127.0.0.1 环路测试，发现无法创建tcp连接；
-  b. 采用192.168.1.10 进行自身ip测试，发现也无法创建tcp连接；
-  c. pc端建立一个简单的http server，可以接收到请求数据，但是没有返回；
+    a. 采用127.0.0.1 环路测试，发现无法创建tcp连接；
+    b. 采用192.168.1.10 进行自身ip测试，发现也无法创建tcp连接；
+    c. pc端建立一个简单的http server，可以接收到请求数据，但是没有返回；
 2. httpd client仍然存在一些问题：
-  a. 无法通过post发送数据，移植的里面只有get方法；
-  b. 建议采用tcp，这样的话比较方便，操作码也比较容易统一；
+    a. 无法通过post发送数据，移植的里面只有get方法；
+    b. 建议采用tcp，这样的话比较方便，操作码也比较容易统一；
 
 ### 2020年6月11日
 
