@@ -1,21 +1,34 @@
 ---
-title: "Kprobe"
+title: "linux Kprobe源码解析"
 date: 2020-05-14T09:09:19+08:00
 description: ""
-draft: true
+draft: false
 tags: [linux内核]
 categories: [linux内核]
 ---
 
-首先kprobe是最基本的探测方式，是实现后两种的基础，它可以在任意的位置放置探测点（就连函数内部的某条指令处也可以），它提供了探测点的调用前、调用后和内存访问出错3种回调方式，分别是pre_handler、post_handler和fault_handler，其中pre_handler函数将在被探测指令被执行前回调，post_handler会在被探测指令执行完毕后回调（注意不是被探测函数），fault_handler会在内存访问出错时被调用；jprobe基于kprobe实现，它用于获取被探测函数的入参值；最后kretprobe从名字种就可以看出其用途了，它同样基于kprobe实现，用于获取被探测函数的返回值。
-————————————————
-版权声明：本文为CSDN博主「luckyapple1028」的原创文章，遵循CC 4.0 BY-SA版权协议，转载请附上原文出处链接及本声明。
-原文链接：https://blog.csdn.net/luckyapple1028/article/details/52972315
+kprobe是linux内核的一个重要特性，是一个轻量级的内核调试工具，同时它又是其他一些更高级的内核调试工具（比如perf和systemtap）的“基础设施”。利用kprobe可以在内核任何代码位置插入用户代码，因此可以在一些关键点插入kprobe达到收集内核运行信息的目的。kprobe的机制也很简单，就是将被探测的位置的指令替换为断点指令（不考虑jmp优化），断点指令被执行后会通过notifier_call_chain机制来通知kprobes，kprobes会首先调用用户指定的pre_handler接口。执行pre_handler接口后会单步执行原始的指令，如果用户也指定了post_handler接口，会在调用post_handler接口后结束处理。基本的处理过程如下图所示：
+
+![](https://gitee.com/chengshuyi/scripts/raw/master/img/20200814080244.png)
+
+上图是x86平台下的流程，arm平台也大致差不多（除了触发断点的指令不同）。本文只涉及arm64平台的kprobe源码。
+
+
+
+### kprobe结构体
+
+
+
+kprobe结构体比较简单，只要注意两点即可：
+
+1. `kprobe_opcode_t *addr`、`const char *symbol_name`和`unsigned int offset`三者的关系：`addr`单独使用、`symbol_name`和`offset`联合使用。因为`symbol_name`只能定位到函数的首地址，加上`offset`就可以定位到函数内部的任意一条指令；
+2. `fault_handler`：
+
+
 
 
 ```c
-
-typedef int (*kprobe_pre_handler_t) (struct kprobe *, struct pt_regs *);
+typedef int (*kprobe_pre_handler_t) (struct kprobe *, struct pt_regs *);  //
 typedef void (*kprobe_post_handler_t) (struct kprobe *, struct pt_regs *,
 				       unsigned long flags);
 typedef int (*kprobe_fault_handler_t) (struct kprobe *, struct pt_regs *,
@@ -25,36 +38,60 @@ typedef int (*kretprobe_handler_t) (struct kretprobe_instance *,
 
 struct kprobe {
 	struct hlist_node hlist;                                        // 所有注册的kprobe都会添加到kprobe_table哈希表中
-	/* list of kprobes for multi-handler support */
 	struct list_head list;                                          // 如果在同一个位置注册了多个kprobe，这些kprobe会形成一个队列
-	/*count the number of times this probe was temporarily disarmed */
 	unsigned long nmissed;
-	/* location of the probe point */
 	kprobe_opcode_t *addr;                                          // 探测的地址
-	/* Allow user to indicate symbol name of the probe point */
 	const char *symbol_name;                                        // 探测点的符号名称。名称和地址不能同时指定，否则注册时会返回EINVAL错误
-	/* Offset into the symbol */
-	unsigned int offset;                                            // 探测点相对于addr地址的偏移
-	/* Called before addr is executed. */
+	unsigned int offset;                                            // 探测点相对于符号地址的偏移，同symblo_name联合使用
 	kprobe_pre_handler_t pre_handler;                               //
-	/* Called after addr is executed, unless... */
 	kprobe_post_handler_t post_handler;                             //
-	/*
-	 * ... called if executing addr causes a fault (eg. page fault).
-	 * Return 1 if it handled fault, otherwise kernel will see it.
-	 */
 	kprobe_fault_handler_t fault_handler;                           //
 	kprobe_opcode_t opcode;                                         // 被修改的指令保存下来以便返回时恢复    
 	struct arch_specific_insn ainsn;                                // 保存了探测点原始指令的拷贝。这里拷贝的指令要比opcode中存储的指令多，拷贝的大小为MAX_INSN_SIZE * sizeof(kprobe_opcode_t)。
-	/*
-	 * Indicates various status flags.
-	 * Protected by kprobe_mutex after this kprobe is registered.
-	 */
 	u32 flags;
 };
 ```
 
+
+
+### register_kprobe
+
+前面讲到kprobe的基本结构，接着我们会看到kprobe的注册流程，下面的脑图已经很清晰了，见脑图：
+
 ![](https://gitee.com/chengshuyi/scripts/raw/master/img/20200811132549.png)
+
+
+
+### breakpoint handler注册
+
+前面讲到在某个内核地址或者符号注册一个kprobe时，kprobe会将该地址或者符号+offset对应的地址的指令保存下来，然后用触发断点指令替换掉，也就是BRK_OPCODE_KPROBES指令。接下来，我将会介绍到内核如何将断点中断路由给kprobe进行处理。
+
+kprobe自身也是作为linux内核的一个模块而存在，linux内核启动时会加载并初始化每一个模块，kprobe也不例外。`kernel/kprobes.c`是初始化kprobe的源码，在`init_kprobes`会调用`arch_init_kprobes`，`arch_init_kprobes`是系统结构相关代码初始化，kprobe的breakpoint handler就是在这个函数内进行注册的。见下面的代码：
+
+```c
+int __init arch_init_kprobes(void)
+{
+	register_kernel_break_hook(&kprobes_break_hook);	// 注册断点kprobe处理函数
+	register_kernel_step_hook(&kprobes_step_hook);		// 注册单步kprobe处理函数
+	return 0;
+}
+
+static struct break_hook kprobes_break_hook = {
+	.imm = KPROBES_BRK_IMM,								// 这里的立即数就是之前脑图上提到的16位立即数，用于标识kprobe
+	.fn = kprobe_breakpoint_handler,
+};
+
+static struct step_hook kprobes_step_hook = {
+	.fn = kprobe_single_step_handler,
+};
+
+```
+
+先简述一下整个流程：
+
+1. krpobe模块调用`arch_init_kprobes`；
+2. `register_kernel_break_hook`：当内核出现断点中断时，内核会检查出现断点的位置的断点指令（同步中断的基础概念），根据断点指令的立即数同`break_hook`结构体的`imm`成员比较，匹配成功则调用回调函数，执行进一步的处理；
+3. `register_kernel_step_hook`：同`break_hook`不同，`step_hook`没有立即数，但是kprobe会检查单步的指令地址来判断是否是自己发出的单步请求。
 
 
 ```c
@@ -64,13 +101,20 @@ struct break_hook {
 	u16 imm;                                                        // 这里的立即数就是之前脑图上提到的16位立即数，用于标识kprobe
 	u16 mask; /* These bits are ignored when comparing with imm */
 };
-```
 
-```c
 struct step_hook {
 	struct list_head node;
 	int (*fn)(struct pt_regs *regs, unsigned int esr);
 };
 ```
 
-![](https://gitee.com/chengshuyi/scripts/raw/master/img/20200811140405.png)
+下面的脑图详尽的描述了kprobe的`kprobe_breakpoint_handler`和`kprobe_single_step_handler`函数流程。需要注意以下两点：
+
+1. kprobe对于post handler的触发做了优化，也就是判断探测地址的指令是否支持模拟，如果支持模拟直接进行模拟，省去了单步的开销；
+2. 需要检查单步的请求是否是自己发出的，因为单步没有立即数用来区分是否是kprobe发出的单步。
+
+![](https://gitee.com/chengshuyi/scripts/raw/master/img/20200814091000.png)
+
+### 参考阅读
+
+1. [An introduction to KProbes](https://lwn.net/Articles/132196/)
