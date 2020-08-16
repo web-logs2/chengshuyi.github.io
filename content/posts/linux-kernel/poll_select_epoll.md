@@ -14,21 +14,19 @@ categories: [linux内核]
 * 添加`EPOLLEXCLUSIVE`标识，解决惊群效应，对应的wait queue采用`add_wait_queue_exclusive`；
 * 但是，这样会导致wait queue一直唤醒等在队首的进程，因此增加了`add_wait_queue_rr`功能（**没怎么理解，既然在等待队列上，说明该进程是空闲的，空闲的去执行任务不很正常吗？**）；
 
-文章[^4]主要提到两个问题，一个是：惊群效应；另外一个是锁。惊群效应 
+文章[^4]主要提到两个问题，一个是：惊群效应；另外一个是锁。
 
 文章[^5]主要提到在用户空间和内核空间维护一个环形缓冲（mmap的方式）。因为目前监听的fd的事件主要通过`epoll_ctl`的方式来进行修改，每次修改的话都需要进行一次系统用，比较耗时。因此，提出了采用环形缓冲的方式来通知事件。相当于，不采用系统调用的方式同内核通信，而是采用共享内存的方式，来提高程序的效率。这种ring-buffer的方式比较常见，比如io-uring等等。所以，作者提到内核是否能够提供一个统一的ring-buffer的交互形式，可以让编程人员更方便的使用。注：貌似该patch最后并没有整合到内核版本。
 
+下面首先对select poll epoll的系统调用、支持的事件进行了对比，其次介绍了linux io复用的原理，最后从源码执行流程分析为什么epoll在监听大量描述符性能要好。
 
+### 系统调用
 
-下面主要就两点进行二者的源码对比：
-
-### 系统调用参数传递
-
-poll核心的系统调用只有一个，其中参数`struct pollfd *fds`是一个链表，包含了要监听的所有文件，可以看到当监听的文件数量过多时，会发生大量的数据从用户空间拷贝到内核空间。
+poll核心的系统调用只有一个，其中参数`struct pollfd *fds`是一个链表，包含了要监听的所有文件，可以看到当监听的文件数量过多时，会发生大量的数据从用户空间拷贝到内核空间，但是**poll监听的描述符个数没有限制**。
 
 `int poll(struct pollfd *fds, nfds_t nfds, int timeout);`
 
-select同poll一样将整个fd的传给内核，只是select采用位的方式。
+select同poll一样将整个fd的传给内核，只是select采用位图的方式。
 
 ```
 int select(int nfds, fd_set *readfds, fd_set *writefds,
@@ -48,11 +46,77 @@ int epoll_ctl(int efd, int op, int fd, struct epoll_event *event);
 int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
 ```
 
-### 触发方式
+### 支持的事件
 
+poll:
+
+```
+POLLIN： 表示对应的文件描述符可以读（包括对端SOCKET正常关闭）；
+POLLPRI： 表示对应的文件描述符有紧急的数据可读（这里应该表示有带外数据到来）；
+POLLOUT： 表示对应的文件描述符可以写；
+POLLRDHUP：TCP连接被对方关闭；
+POLLERR： 表示对应的文件描述符发生错误；
+POLLHUP： 表示对应的文件描述符被挂断；
+POLLNVAL：文件描述符未打开；
+```
+
+select:
+```
+POLLIN_SET：读
+POLLOUT_SET：写
+POLLEX_SET：异常
+```
+
+epoll:
 
 ```c
+EPOLLIN ： 表示对应的文件描述符可以读（包括对端SOCKET正常关闭）；
+EPOLLOUT： 表示对应的文件描述符可以写；
+EPOLLPRI： 表示对应的文件描述符有紧急的数据可读（这里应该表示有带外数据到来）；
+EPOLLERR： 表示对应的文件描述符发生错误；
+EPOLLHUP： 表示对应的文件描述符被挂断；
+EPOLLET： 将 EPOLL设为边缘触发(Edge Triggered)模式（默认为水平触发），这是相对于水平触发(Level Triggered)来说的。
+EPOLLONESHOT： 只监听一次事件，当监听完这次事件之后，如果还需要继续监听这个socket的话，需要再次把这个socket加入到EPOLL队列里
+```
 
+### linux io复用基本原理
+
+1. 首先需要理解的是：监听的描述符其实是将自身进程加入到该事件提供的等待队列上，事件到来时会从等待等列唤醒进程。比如：socket描述符包含了socket的描述信息，提供了poll方法，不论是select、poll或者epoll，调用socket提供的poll方法，然后由该poll方法将进程加入到socket等待队列上；
+2. 其次是io复用，也就是利用select、poll或者epoll同时监听多个事件，事件到来时用户程序可以读取或者发送数据；
+3. 最后要说的是，select、poll或者epoll各自有各自的优势。
+
+### 源码分析
+
+首先是select，下面是select脑图。其中比较关键的有两个点：
+
+1. select有三类事件输入、输出和异常，用bitmap进行存储；
+2. poll_initwait函数，特别注意`struct poll_wqueues`、`poll_table`、`poll_table_page`、`poll_table_entry`、`poll_queue_proc`几者之间的关系，以及作用；
+
+```c
+struct 	poll_wqueues {
+	poll_table pt;							// 主要是一个回调函数，在调用vfs_poll时，具体会调用poll方法，poll方法回调该函数
+	struct poll_table_page *table;			// 当内核栈不够用时，采用动态分配的poll_table_entry
+	struct task_struct *polling_task;		// 当前的进程实体
+	int triggered;
+	int error;
+	int inline_index;
+	struct poll_table_entry inline_entries[N_INLINE_POLL_ENTRIES];	// 内核栈空间的poll_table_entry
+};
+```
+
+3. 唤醒函数和poll一样，都是`pollwake`。
+
+![](https://gitee.com/chengshuyi/scripts/raw/master/img/20200816111232.png)
+
+接着是epoll，下面是epoll脑图。其中比较关键的有两个点：
+
+1. epoll采用红黑树管理fd，方便插入和删除；
+2. epoll同selet的`poll table`的回调函数不一样，epoll是ep_ptable_queue_proc，这样可以修该wait queue的回调函数，以及传入epoll entry；
+
+![](https://gitee.com/chengshuyi/scripts/raw/master/img/20200816120550.png)
+
+<!-- 
+```c
 struct pollfd {
 	int fd;
 	short events;
@@ -95,13 +159,11 @@ struct poll_table_page {
 };
 ```
 
-
-
 ```c
 static inline void poll_wait(struct file * filp, wait_queue_head_t * wait_address, poll_table *p)
-```
+``` -->
 
-poll系统调用：
+<!-- poll系统调用：
     将毫秒转换成内核struct timespec64时间结构体行态
     call do_sys_poll
         将用户传进来的struct pollfd数组拷贝到内核空间，用struct poll_list管理，每个poll_list占用4K的内存
@@ -143,11 +205,11 @@ pollwake
         struct poll_wqueues triggered置为1，表示有事件发生
         call default_wake_function
             call try_to_wake_up
-```
+``` -->
 
 
 
-```
+<!-- ```
 epoll_create
 epoll_ctl
 
@@ -238,12 +300,12 @@ do_epoll_wait
         call __add_wait_queue_exclusive
         set_current_state(TASK_INTERRUPTIBLE);
         ep_events_available
-        schedule_hrtimeout_range
+        schedule_hrtimeout_range -->
 
 
 
 
-
+<!-- 
 epoll源码解析：https://blog.csdn.net/qq_36347375/article/details/91177145
 int poll(struct pollfd *fds, nfds_t nfds, int timeout);
 int ppoll(struct pollfd *fds, nfds_t nfds, const struct timespec *tmo_p, const sigset_t *sigmask);
@@ -267,9 +329,9 @@ struct pollfd {
     
        · the call is interrupted by a signal handler; or
     
-       · the timeout expires.
+       · the timeout expires. -->
 
-### 唤醒
+<!-- ### 唤醒
 
 从下面代码可以看到，select和poll均采用default_wake_function。`init_waitqueue_func_entry(&entry->wait, pollwake);`
 
@@ -357,7 +419,7 @@ static void ep_ptable_queue_proc(struct file *file, wait_queue_head_t *whead,
 }
 
 
-```
+``` -->
 
 
 
