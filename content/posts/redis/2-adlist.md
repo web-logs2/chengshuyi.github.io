@@ -50,6 +50,7 @@ typedef struct list {                   // 双向链表结构体，注意同节�
 
 双向链表创建只需要分配双向链表结构体即可，具体见注释：
 
+```c
 list *listCreate(void)
 {
     struct list *list;
@@ -63,6 +64,7 @@ list *listCreate(void)
     list->match = NULL;
     return list;
 }
+```
 
 ### 双向链表头插
 
