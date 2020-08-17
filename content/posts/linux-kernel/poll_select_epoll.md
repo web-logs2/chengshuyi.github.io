@@ -1,8 +1,8 @@
 ---
-title: "Poll_select_epoll"
+title: "poll select epoll对比分析"
 date: 2020-05-05T13:06:02+08:00
 description: ""
-draft: true
+draft: false
 tags: [linux内核]
 categories: [linux内核]
 ---
